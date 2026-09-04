@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>خونه سه‌بعدی 🏠</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { width:100%; height:100%; overflow:hidden; background:#111;
+    font-family:Tahoma,sans-serif; touch-action:none; }
+  #c { display:block; width:100%; height:100%; }
+  #room { position:fixed; top:12px; left:50%; transform:translateX(-50%);
+    background:rgba(0,0,0,.55); color:#ffd76a; padding:8px 22px; border-radius:99px;
+    font-size:16px; z-index:10; pointer-events:none; white-space:nowrap; }
+  #hint { position:fixed; bottom:14px; left:50%; transform:translateX(-50%);
+    background:rgba(0,0,0,.5); color:#fff; padding:7px 18px; border-radius:99px;
+    font-size:12px; z-index:10; pointer-events:none; white-space:nowrap; }
+  #map { position:fixed; top:12px; left:12px; z-index:10; border-radius:8px;
+    border:2px solid rgba(255,255,255,.4); }
+  #joy { position:fixed; bottom:70px; right:24px; width:120px; height:120px;
+    background:rgba(255,255,255,.12); border:2px solid rgba(255,255,255,.3);
+    border-radius:50%; z-index:10; }
+  #stick { position:absolute; left:35px; top:35px; width:50px; height:50px;
+    background:rgba(255,215,106,.85); border-radius:50%; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<canvas id="map" width="120" height="90"></canvas>
+<div id="room">پذیرایی 🏠</div>
+<div id="hint">جوی‌استیک: حرکت &nbsp;|&nbsp; کشیدن صفحه: نگاه</div>
+<div id="joy"><div id="stick"></div></div>
+<script>
+// نقشه خونه (هر خونه ۱ متر) — # دیوار، . خالی، بقیه مبلمان
+var MAP = [
+"############",
+"#......#KKF#",
+"#SS.T.V#...#",
+"#......#...#",
+"#......###.#",
+"###.#......#",
+"#....#..BB.#",
+"#BB.D.#.W..#",
+"######.#####"
+];
+var ROWS = MAP.length, COLS = MAP[0].length;
+
+// رنگ هر نوع بلوک
+var COLORS = {
+  '#':[232,222,200], 'S':[150,70,60],  'T':[170,115,60], 'V':[35,35,48],
+  'K':[150,160,165], 'F':[222,226,229], 'B':[70,100,150], 'W':[110,75,45],
+  'D':[140,110,70]
+};
+
+var cv = document.getElementById('c');
+var ctx = cv.getContext('2d');
+function resize() { cv.width = innerWidth; cv.height = innerHeight; }
+addEventListener('resize', resize); resize();
+
+var mapCv = document.getElementById('map');
+var mctx = mapCv.getContext('2d');
+
+// بازیکن: وسط در ورودی، رو به داخل خونه
+var px = 0.5, pz = 3.0, ang = -Math.PI/2, PR = 0.22;
+
+function solid(x, z) {
+  var c = Math.floor(x + 6), r = Math.floor(z + 4.5);
+  if (c < 0 || r < 0 || c >= COLS || r >= ROWS) return true;
+  return MAP[r][c] !== '.';
+}
+function move(dx, dz) {
+  if (!solid(px+dx, pz)) px += dx;
+  if (!solid(px, pz+dz)) pz += dz;
+}
+
+function cast(rayA) {
+  var dx = Math.cos(rayA), dz = Math.sin(rayA);
+  var c = Math.floor(px+6), r = Math.floor(pz+4.5);
+  var ddx = Math.abs(1/(dx||1e-9)), ddz = Math.abs(1/(dz||1e-9));
+  var stepX, stepZ, sx, sz;
+  if (dx < 0) { stepX=-1; sx=(px+6-c)*ddx; } else { stepX=1; sx=(c+1-(px+6))*ddx; }
+  if (dz < 0) { stepZ=-1; sz=(pz+4.5-r)*ddz; } else { stepZ=1; sz=(r+1-(pz+4.5))*ddz; }
+  var side=0, cell='#', guard=0;
+  while (guard++ < 64) {
+    if (sx < sz) { sx+=ddx; c+=stepX; side=0; } else { sz+=ddz; r+=stepZ; side=1; }
+    if (c<0||r<0||c>=COLS||r>=ROWS) break;
+    cell = MAP[r][c];
+    if (cell !== '.') break;
+  }
+  var dist = (side===0 ? sx-ddx : sz-ddz);
+  return { d: Math.max(dist, 0.05), side: side, cell: cell };
+}
+
+var FOV = Math.PI/3;
+function render() {
+  var W = cv.width, H = cv.height, half = H/2;
+  // سقف و کف
+  var sky = ctx.createLinearGradient(0,0,0,half);
+  sky.addColorStop(0,'#2b3a4a'); sky.addColorStop(1,'#6b7f92');
+  ctx.fillStyle = sky; ctx.fillRect(0,0,W,half);
+  var fl = ctx.createLinearGradient(0,half,0,H);
+  fl.addColorStop(0,'#8a6b45'); fl.addColorStop(1,'#4a3823');
+  ctx.fillStyle = fl; ctx.fillRect(0,half,W,H);
+
+  var cols = Math.floor(W/3);
+  var w = W/cols;
+  for (var i=0; i<cols; i++) {
+    var rayA = ang - FOV/2 + FOV*i/cols;
+    var hit = cast(rayA);
+    var d = hit.d * Math.cos(rayA - ang); // حذف انحنای چشم‌ماهی
+    var h = Math.min(H*3, (H*0.9)/d);
+    var base = COLORS[hit.cell] || COLORS['#'];
+    var sh = Math.max(0.25, 1/(1+d*0.25)) * (hit.side ? 0.72 : 1);
+    ctx.fillStyle = 'rgb('+Math.floor(base[0]*sh)+','+Math.floor(base[1]*sh)+','+Math.floor(base[2]*sh)+')';
+    ctx.fillRect(i*w, half-h/2, w+1, h);
+  }
+  drawMap();
+}
+
+function drawMap() {
+  var s = 10;
+  mctx.fillStyle = 'rgba(0,0,0,.6)'; mctx.fillRect(0,0,120,90);
+  for (var r=0; r<ROWS; r++) for (var c=0; c<COLS; c++) {
+    var ch = MAP[r][c];
+    if (ch === '.') continue;
+    var b = COLORS[ch] || COLORS['#'];
+    mctx.fillStyle = 'rgb('+b[0]+','+b[1]+','+b[2]+')';
+    mctx.fillRect(c*s, r*s, s, s);
+  }
+  var mx = (px+6)*s, my = (pz+4.5)*s;
+  mctx.strokeStyle = '#ff3b3b'; mctx.lineWidth = 2;
+  mctx.beginPath(); mctx.moveTo(mx,my);
+  mctx.lineTo(mx+Math.cos(ang)*12, my+Math.sin(ang)*12); mctx.stroke();
+  mctx.fillStyle = '#ff3b3b';
+  mctx.beginPath(); mctx.arc(mx,my,3.5,0,7); mctx.fill();
+}
+
+// اسم اتاق
+var roomEl = document.getElementById('room');
+function roomName() {
+  if (px>1.5 && pz<0) return 'آشپزخانه 🍳';
+  if (px>1.5) return 'خواب ۱ 🛏️';
+  if (px<-0.5 && pz>0.5) return 'خواب ۲ 🛏️';
+  return 'پذیرایی 🏠';
+}
+
+// کنترل‌ها
+var keys = {};
+addEventListener('keydown', function(e){ keys[e.key.toLowerCase()] = true; });
+addEventListener('keyup', function(e){ keys[e.key.toLowerCase()] = false; });
+
+// نگاه با درگ (موس + لمس)
+var lookId = null, lx = 0;
+function lookStart(id, x) { if (lookId===null) { lookId=id; lx=x; } }
+function lookMove(id, x) {
+  if (id === lookId) { ang += (x-lx)*0.006; lx = x; }
+}
+function lookEnd(id) { if (id === lookId) lookId = null; }
+var mouseDown = false;
+cv.addEventListener('mousedown', function(e){ mouseDown=true; lookStart('m', e.clientX); });
+addEventListener('mousemove', function(e){ if (mouseDown) lookMove('m', e.clientX); });
+addEventListener('mouseup', function(){ mouseDown=false; lookEnd('m'); });
+addEventListener('touchstart', function(e){
+  for (var i=0;i<e.changedTouches.length;i++) {
+    var t = e.changedTouches[i];
+    if (t.clientX < innerWidth-170 || t.clientY < innerHeight-230) lookStart(t.identifier, t.clientX);
+  }
+}, {passive:true});
+addEventListener('touchmove', function(e){
+  for (var i=0;i<e.changedTouches.length;i++) {
+    var t = e.changedTouches[i];
+    // جوی‌استیک جدا هندل می‌شود
+    if (t.identifier === joyId) { joyPos(t); continue; }
+    lookMove(t.identifier, t.clientX);
+  }
+}, {passive:true});
+addEventListener('touchend', function(e){
+  for (var i=0;i<e.changedTouches.length;i++) {
+    var t = e.changedTouches[i];
+    if (t.identifier === joyId) joyReset();
+    else lookEnd(t.identifier);
+  }
+});
+
+// جوی‌استیک
+var joy = document.getElementById('joy'), stick = document.getElementById('stick');
+var jx=0, jy=0, joyId=null;
+function joyPos(t) {
+  var r = joy.getBoundingClientRect();
+  var dx=(t.clientX-(r.left+60))/50, dy=(t.clientY-(r.top+60))/50;
+  var l=Math.hypot(dx,dy)||1;
+  if (l>1) { dx/=l; dy/=l; }
+  jx=dx; jy=dy;
+  stick.style.left=(35+dx*32)+'px'; stick.style.top=(35+dy*32)+'px';
+}
+function joyReset() {
+  joyId=null; jx=jy=0;
+  stick.style.left='35px'; stick.style.top='35px';
+}
+joy.addEventListener('touchstart', function(e){
+  joyId=e.changedTouches[0].identifier; joyPos(e.changedTouches[0]); e.preventDefault();
+}, {passive:false});
+
+// حلقه اصلی
+var last = performance.now();
+function loop(now) {
+  requestAnimationFrame(loop);
+  var dt = Math.min((now-last)/1000, 0.05); last = now;
+  var sp = 2.6*dt, f=0, s=0;
+  if (keys['w']||keys['arrowup']) f+=1;
+  if (keys['s']||keys['arrowdown']) f-=1;
+  if (keys['a']||keys['arrowright']) s+=1;
+  if (keys['d']||keys['arrowleft']) s-=1;
+  f += -jy; s += jx;
+  if (f||s) {
+    var l = Math.hypot(f,s); f/=Math.max(l,1); s/=Math.max(l,1);
+    move((Math.cos(ang)*f - Math.sin(ang)*s)*sp,
+         (Math.sin(ang)*f + Math.cos(ang)*s)*sp);
+  }
+  render();
+  var n = roomName();
+  if (roomEl.textContent !== n) roomEl.textContent = n;
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
