@@ -7,7 +7,7 @@
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
   html,body { width:100%; height:100%; overflow:hidden; background:#111;
-    font-family:Tahoma,sans-serif; touch-action:none; }
+    font-family:Tahoma,sans-serif; touch-action:none; overscroll-behavior:none; }
   #c { display:block; width:100%; height:100%; }
   #room { position:fixed; top:12px; left:50%; transform:translateX(-50%);
     background:rgba(0,0,0,.55); color:#ffd76a; padding:8px 22px; border-radius:99px;
@@ -17,11 +17,11 @@
     font-size:12px; z-index:10; pointer-events:none; white-space:nowrap; }
   #map { position:fixed; top:12px; left:12px; z-index:10; border-radius:8px;
     border:2px solid rgba(255,255,255,.4); }
-  #joy { position:fixed; bottom:70px; right:24px; width:120px; height:120px;
-    background:rgba(255,255,255,.12); border:2px solid rgba(255,255,255,.3);
-    border-radius:50%; z-index:10; }
-  #stick { position:absolute; left:35px; top:35px; width:50px; height:50px;
-    background:rgba(255,215,106,.85); border-radius:50%; }
+  #joy { position:fixed; bottom:70px; right:24px; width:124px; height:124px;
+    background:rgba(255,255,255,.12); border:2px solid rgba(255,255,255,.35);
+    border-radius:50%; z-index:10; touch-action:none; }
+  #stick { position:absolute; left:37px; top:37px; width:50px; height:50px;
+    background:rgba(255,215,106,.9); border-radius:50%; pointer-events:none; }
 </style>
 </head>
 <body>
@@ -45,22 +45,28 @@ var MAP = [
 ];
 var ROWS = MAP.length, COLS = MAP[0].length;
 
-// رنگ هر نوع بلوک
 var COLORS = {
-  '#':[232,222,200], 'S':[150,70,60],  'T':[170,115,60], 'V':[35,35,48],
-  'K':[150,160,165], 'F':[222,226,229], 'B':[70,100,150], 'W':[110,75,45],
-  'D':[140,110,70]
+  '#':[233,224,203], 'S':[158,74,62],  'T':[178,120,62], 'V':[40,40,55],
+  'K':[155,165,170], 'F':[224,228,231], 'B':[74,106,158], 'W':[116,79,47],
+  'D':[146,114,72]
 };
 
 var cv = document.getElementById('c');
 var ctx = cv.getContext('2d');
-function resize() { cv.width = innerWidth; cv.height = innerHeight; }
+var vig = null;
+function resize() {
+  cv.width = innerWidth; cv.height = innerHeight;
+  vig = ctx.createRadialGradient(
+    cv.width/2, cv.height/2, Math.min(cv.width,cv.height)*0.35,
+    cv.width/2, cv.height/2, Math.max(cv.width,cv.height)*0.75);
+  vig.addColorStop(0, 'rgba(0,0,0,0)');
+  vig.addColorStop(1, 'rgba(0,0,0,0.45)');
+}
 addEventListener('resize', resize); resize();
 
 var mapCv = document.getElementById('map');
 var mctx = mapCv.getContext('2d');
 
-// بازیکن: وسط در ورودی، رو به داخل خونه
 var px = 0.5, pz = 3.0, ang = -Math.PI/2, PR = 0.22;
 
 function solid(x, z) {
@@ -87,33 +93,65 @@ function cast(rayA) {
     cell = MAP[r][c];
     if (cell !== '.') break;
   }
-  var dist = (side===0 ? sx-ddx : sz-ddz);
-  return { d: Math.max(dist, 0.05), side: side, cell: cell };
+  var dist = Math.max((side===0 ? sx-ddx : sz-ddz), 0.05);
+  var wallX = (side===0 ? (pz+4.5)+dist*dz : (px+6)+dist*dx);
+  var fx = wallX - Math.floor(wallX);
+  return { d: dist, side: side, cell: cell, fx: fx };
+}
+
+function rgb(c) { return 'rgb('+c[0]+','+c[1]+','+c[2]+')'; }
+function mix(a, b, t) {
+  return [Math.floor(a[0]+(b[0]-a[0])*t), Math.floor(a[1]+(b[1]-a[1])*t), Math.floor(a[2]+(b[2]-a[2])*t)];
+}
+function shade(base, f) {
+  return [Math.floor(base[0]*f), Math.floor(base[1]*f), Math.floor(base[2]*f)];
 }
 
 var FOV = Math.PI/3;
-function render() {
-  var W = cv.width, H = cv.height, half = H/2;
-  // سقف و کف
-  var sky = ctx.createLinearGradient(0,0,0,half);
-  sky.addColorStop(0,'#2b3a4a'); sky.addColorStop(1,'#6b7f92');
-  ctx.fillStyle = sky; ctx.fillRect(0,0,W,half);
-  var fl = ctx.createLinearGradient(0,half,0,H);
-  fl.addColorStop(0,'#8a6b45'); fl.addColorStop(1,'#4a3823');
-  ctx.fillStyle = fl; ctx.fillRect(0,half,W,H);
+var CEIL_TOP=[26,34,44], CEIL_BOT=[125,143,161];
+var FL_TOP=[86,66,44], FL_BOT=[168,130,80];
 
-  var cols = Math.floor(W/3);
-  var w = W/cols;
-  for (var i=0; i<cols; i++) {
-    var rayA = ang - FOV/2 + FOV*i/cols;
-    var hit = cast(rayA);
-    var d = hit.d * Math.cos(rayA - ang); // حذف انحنای چشم‌ماهی
-    var h = Math.min(H*3, (H*0.9)/d);
-    var base = COLORS[hit.cell] || COLORS['#'];
-    var sh = Math.max(0.25, 1/(1+d*0.25)) * (hit.side ? 0.72 : 1);
-    ctx.fillStyle = 'rgb('+Math.floor(base[0]*sh)+','+Math.floor(base[1]*sh)+','+Math.floor(base[2]*sh)+')';
-    ctx.fillRect(i*w, half-h/2, w+1, h);
+function render() {
+  var W = cv.width, H = cv.height, half = H/2, i, y0, y1;
+  // سقف پلکانی (دور تیره، نزدیک روشن)
+  var CB = 10;
+  for (i=0; i<CB; i++) {
+    y0 = half*i/CB; y1 = half*(i+1)/CB;
+    ctx.fillStyle = rgb(mix(CEIL_TOP, CEIL_BOT, i/(CB-1)));
+    ctx.fillRect(0, y0, W, y1-y0+1);
   }
+  // کف پلکانی (دور تیره، نزدیک روشن)
+  var FB = 22;
+  for (i=0; i<FB; i++) {
+    y0 = half + (H-half)*i/FB; y1 = half + (H-half)*(i+1)/FB;
+    ctx.fillStyle = rgb(mix(FL_TOP, FL_BOT, i/(FB-1)));
+    ctx.fillRect(0, y0, W, y1-y0+1);
+  }
+
+  var step = Math.max(1, Math.floor(W/500));
+  for (var x=0; x<W; x+=step) {
+    var rayA = ang - FOV/2 + FOV*x/W;
+    var hit = cast(rayA);
+    var d = hit.d * Math.cos(rayA - ang);
+    var h = Math.min(H*3, H/d);
+    var base = COLORS[hit.cell] || COLORS['#'];
+    var sh = Math.max(0.22, 1/(1+d*0.28)) * (hit.side ? 0.7 : 1);
+    // بافت: نوارهای عمودی + تیرگی لبه بلوک
+    var band = (Math.floor(hit.fx*7)%2 === 0) ? 1 : 0.86;
+    var edge = Math.min(hit.fx, 1-hit.fx);
+    if (edge < 0.04) band *= 0.65;
+    var mid = shade(base, sh*band);
+    var top = shade(base, sh*band*0.62);
+    var bot = shade(base, sh*band*0.45);
+    var wy = half-h/2, th = h*0.07, bh = h*0.12;
+    ctx.fillStyle = rgb(top); ctx.fillRect(x, wy, step+0.5, th);
+    ctx.fillStyle = rgb(mid); ctx.fillRect(x, wy+th, step+0.5, h-th-bh);
+    ctx.fillStyle = rgb(bot); ctx.fillRect(x, wy+h-bh, step+0.5, bh);
+  }
+  // وینیت + نقطه وسط
+  ctx.fillStyle = vig; ctx.fillRect(0,0,W,H);
+  ctx.fillStyle = 'rgba(255,255,255,.7)';
+  ctx.fillRect(W/2-1.5, H/2-1.5, 3, 3);
   drawMap();
 }
 
@@ -123,8 +161,7 @@ function drawMap() {
   for (var r=0; r<ROWS; r++) for (var c=0; c<COLS; c++) {
     var ch = MAP[r][c];
     if (ch === '.') continue;
-    var b = COLORS[ch] || COLORS['#'];
-    mctx.fillStyle = 'rgb('+b[0]+','+b[1]+','+b[2]+')';
+    mctx.fillStyle = rgb(COLORS[ch] || COLORS['#']);
     mctx.fillRect(c*s, r*s, s, s);
   }
   var mx = (px+6)*s, my = (pz+4.5)*s;
@@ -135,7 +172,6 @@ function drawMap() {
   mctx.beginPath(); mctx.arc(mx,my,3.5,0,7); mctx.fill();
 }
 
-// اسم اتاق
 var roomEl = document.getElementById('room');
 function roomName() {
   if (px>1.5 && pz<0) return 'آشپزخانه 🍳';
@@ -144,64 +180,77 @@ function roomName() {
   return 'پذیرایی 🏠';
 }
 
-// کنترل‌ها
 var keys = {};
 addEventListener('keydown', function(e){ keys[e.key.toLowerCase()] = true; });
 addEventListener('keyup', function(e){ keys[e.key.toLowerCase()] = false; });
 
-// نگاه با درگ (موس + لمس)
+// نگاه با درگ (موس + لمس) — به‌جز روی جوی‌استیک
+var joy = document.getElementById('joy'), stick = document.getElementById('stick');
+function inJoy(x, y) {
+  var r = joy.getBoundingClientRect();
+  return x>=r.left-8 && x<=r.right+8 && y>=r.top-8 && y<=r.bottom+8;
+}
 var lookId = null, lx = 0;
-function lookStart(id, x) { if (lookId===null) { lookId=id; lx=x; } }
+function lookStart(id, x, y) { if (!inJoy(x,y) && lookId===null) { lookId=id; lx=x; } }
 function lookMove(id, x) {
   if (id === lookId) { ang += (x-lx)*0.006; lx = x; }
 }
 function lookEnd(id) { if (id === lookId) lookId = null; }
 var mouseDown = false;
-cv.addEventListener('mousedown', function(e){ mouseDown=true; lookStart('m', e.clientX); });
+cv.addEventListener('mousedown', function(e){ mouseDown=true; lookStart('m', e.clientX, e.clientY); });
 addEventListener('mousemove', function(e){ if (mouseDown) lookMove('m', e.clientX); });
 addEventListener('mouseup', function(){ mouseDown=false; lookEnd('m'); });
 addEventListener('touchstart', function(e){
   for (var i=0;i<e.changedTouches.length;i++) {
     var t = e.changedTouches[i];
-    if (t.clientX < innerWidth-170 || t.clientY < innerHeight-230) lookStart(t.identifier, t.clientX);
+    lookStart(t.identifier, t.clientX, t.clientY);
   }
 }, {passive:true});
 addEventListener('touchmove', function(e){
   for (var i=0;i<e.changedTouches.length;i++) {
     var t = e.changedTouches[i];
-    // جوی‌استیک جدا هندل می‌شود
-    if (t.identifier === joyId) { joyPos(t); continue; }
     lookMove(t.identifier, t.clientX);
   }
 }, {passive:true});
 addEventListener('touchend', function(e){
-  for (var i=0;i<e.changedTouches.length;i++) {
-    var t = e.changedTouches[i];
-    if (t.identifier === joyId) joyReset();
-    else lookEnd(t.identifier);
-  }
+  for (var i=0;i<e.changedTouches.length;i++) lookEnd(e.changedTouches[i].identifier);
+});
+addEventListener('touchcancel', function(e){
+  for (var i=0;i<e.changedTouches.length;i++) lookEnd(e.changedTouches[i].identifier);
 });
 
-// جوی‌استیک
-var joy = document.getElementById('joy'), stick = document.getElementById('stick');
-var jx=0, jy=0, joyId=null;
-function joyPos(t) {
+// جوی‌استیک با Pointer Events (لمس + موس)
+var jx=0, jy=0, joyPid=null;
+function joyPos(e) {
   var r = joy.getBoundingClientRect();
-  var dx=(t.clientX-(r.left+60))/50, dy=(t.clientY-(r.top+60))/50;
+  var dx=(e.clientX-(r.left+r.width/2))/(r.width/2-12);
+  var dy=(e.clientY-(r.top+r.height/2))/(r.height/2-12);
   var l=Math.hypot(dx,dy)||1;
   if (l>1) { dx/=l; dy/=l; }
   jx=dx; jy=dy;
-  stick.style.left=(35+dx*32)+'px'; stick.style.top=(35+dy*32)+'px';
+  var R = r.width/2-25;
+  stick.style.left=((r.width-50)/2+dx*R)+'px';
+  stick.style.top=((r.height-50)/2+dy*R)+'px';
 }
 function joyReset() {
-  joyId=null; jx=jy=0;
-  stick.style.left='35px'; stick.style.top='35px';
+  joyPid=null; jx=jy=0;
+  stick.style.left='37px'; stick.style.top='37px';
 }
-joy.addEventListener('touchstart', function(e){
-  joyId=e.changedTouches[0].identifier; joyPos(e.changedTouches[0]); e.preventDefault();
-}, {passive:false});
+joy.addEventListener('pointerdown', function(e){
+  joyPid=e.pointerId;
+  try { joy.setPointerCapture(e.pointerId); } catch(_){}
+  joyPos(e); e.preventDefault();
+});
+joy.addEventListener('pointermove', function(e){
+  if (e.pointerId===joyPid) joyPos(e);
+});
+joy.addEventListener('pointerup', function(e){
+  if (e.pointerId===joyPid) joyReset();
+});
+joy.addEventListener('pointercancel', function(e){
+  if (e.pointerId===joyPid) joyReset();
+});
 
-// حلقه اصلی
 var last = performance.now();
 function loop(now) {
   requestAnimationFrame(loop);
